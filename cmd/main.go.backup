@@ -1,0 +1,242 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+	"sigs.k8s.io/yaml"
+)
+
+var (
+	kubeconfig string
+	outputDir  string
+	verbose    bool
+)
+
+type ResourceCollector struct {
+	client     kubernetes.Interface
+	discovery  discovery.DiscoveryInterface
+	outputDir  string
+	verbose    bool
+}
+
+func main() {
+	var rootCmd = &cobra.Command{
+		Use:   "k8s-resource-collector",
+		Short: "Collect all Kubernetes API resources and save them as individual YAML files",
+		Long: `A tool that discovers all API resources in a Kubernetes/OpenShift cluster
+and saves each resource type as a separate YAML file. Can be used as an oc plugin.`,
+		RunE: runCollector,
+	}
+
+	rootCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: $KUBECONFIG or ~/.kube/config)")
+	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "./collected-resources", "Output directory for collected resources")
+	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runCollector(cmd *cobra.Command, args []string) error {
+	// Initialize Kubernetes client
+	config, err := getKubeConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get kubeconfig: %w", err)
+	}
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create discovery client: %w", err)
+	}
+
+	// Create output directory
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	collector := &ResourceCollector{
+		client:    client,
+		discovery: discoveryClient,
+		outputDir: outputDir,
+		verbose:   verbose,
+	}
+
+	return collector.CollectResources()
+}
+
+func getKubeConfig() (*rest.Config, error) {
+	var kubeconfigPath string
+
+	// Priority: flag > environment variable > default location
+	if kubeconfig != "" {
+		kubeconfigPath = kubeconfig
+	} else if envKubeconfig := os.Getenv("KUBECONFIG"); envKubeconfig != "" {
+		kubeconfigPath = envKubeconfig
+	} else {
+		kubeconfigPath = filepath.Join(homedir.HomeDir(), ".kube", "config")
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("kubeconfig file not found at %s", kubeconfigPath)
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
+	}
+
+	return config, nil
+}
+
+func (rc *ResourceCollector) CollectResources() error {
+	fmt.Printf("Starting resource collection to directory: %s\n", rc.outputDir)
+
+	// Get all API resources
+	resources, err := rc.discovery.ServerPreferredResources()
+	if err != nil {
+		return fmt.Errorf("failed to discover API resources: %w", err)
+	}
+
+	collectedCount := 0
+	errorCount := 0
+
+	for _, resourceList := range resources {
+		for _, resource := range resourceList.APIResources {
+			// Skip subresources
+			if strings.Contains(resource.Name, "/") {
+				continue
+			}
+
+			// Only collect resources that support list and get verbs
+			if !contains(resource.Verbs, "list") || !contains(resource.Verbs, "get") {
+				continue
+			}
+
+			if rc.verbose {
+				fmt.Printf("Collecting resource: %s\n", resource.Name)
+			}
+
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to collect resource %s: %v\n", resource.Name, err)
+				errorCount++
+			} else {
+				collectedCount++
+			}
+		}
+	}
+
+	fmt.Printf("\nCollection completed!\n")
+	fmt.Printf("Successfully collected: %d resources\n", collectedCount)
+	fmt.Printf("Errors encountered: %d resources\n", errorCount)
+	fmt.Printf("Output directory: %s\n", rc.outputDir)
+
+	return nil
+}
+
+	if err != nil {
+		return fmt.Errorf("failed to parse group version: %w", err)
+	}
+
+		Group:    gv.Group,
+		Resource: resource.Name,
+	}
+
+	// Get all instances of this resource across all namespaces
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	unstructuredList, err := rc.client.Discovery().RESTClient().
+		Get().
+		AbsPath("/api/v1").
+		Resource(resource.Name).
+		Do(ctx).
+		Get()
+
+	if err != nil {
+		// Try with the specific group version
+		unstructuredList, err = rc.client.Discovery().RESTClient().
+			Get().
+			Resource(resource.Name).
+			Do(ctx).
+			Get()
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to get resource instances: %w", err)
+	}
+
+	// Convert to YAML
+	yamlData, err := yaml.Marshal(unstructuredList)
+	if err != nil {
+		return fmt.Errorf("failed to marshal to YAML: %w", err)
+	}
+
+	// Create filename from resource name
+	filename := sanitizeFilename(resource.Name)
+	if gv.Group != "" {
+	} else {
+	}
+
+	filepath := filepath.Join(rc.outputDir, filename)
+
+	// Add header comment
+	
+	finalYaml := header + string(yamlData)
+
+	// Write to file
+	err = os.WriteFile(filepath, []byte(finalYaml), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write file %s: %w", filepath, err)
+	}
+
+	if rc.verbose {
+		fmt.Printf("  -> Saved to: %s\n", filepath)
+	}
+
+	return nil
+}
+
+func sanitizeFilename(name string) string {
+	// Replace characters that are not safe for filenames
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"*", "-",
+		"?", "-",
+		"\"", "-",
+		"<", "-",
+		">", "-",
+		"|", "-",
+	)
+	return replacer.Replace(name)
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}

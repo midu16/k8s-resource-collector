@@ -1,0 +1,178 @@
+# Enhanced Functional Testing Configuration
+# This file defines the test scenarios and expected behaviors
+
+test_suite:
+  name: "k8s-resource-collector Functional Tests"
+  version: "1.0.0"
+  description: "Comprehensive functional testing for k8s-resource-collector"
+
+binary:
+  path: "../bin/k8s-resource-collector"
+  expected_size_min: 1000000  # Minimum 1MB
+  expected_size_max: 10000000 # Maximum 10MB
+
+test_categories:
+  basic_functionality:
+    - name: "help_command"
+      description: "Test help command output"
+      command: ["--help"]
+      expected_exit_code: 0
+      expected_output_contains: ["Usage of"]
+      
+    - name: "invalid_arguments"
+      description: "Test invalid command line arguments"
+      command: ["--unknown-flag"]
+      expected_exit_code: 1
+      expected_output_contains: ["unknown flag"]
+
+  configuration:
+    - name: "kubeconfig_validation"
+      description: "Test kubeconfig file validation"
+      command: ["--kubeconfig", "/nonexistent/path", "--verbose"]
+      expected_exit_code: 1
+      expected_output_contains: ["kubeconfig file not found"]
+      
+    - name: "output_directory_creation"
+      description: "Test output directory creation"
+      command: ["--output", "./test-output/dir-test", "--verbose"]
+      expected_exit_code: 1  # Will fail due to no cluster access
+      expected_directory_created: "./test-output/dir-test"
+
+  modes:
+    - name: "directory_mode"
+      description: "Test directory mode functionality"
+      command: ["--output", "./test-output/dir-mode", "--verbose"]
+      expected_exit_code: 1
+      expected_directory_created: "./test-output/dir-mode"
+      
+    - name: "single_file_mode"
+      description: "Test single file mode functionality"
+      command: ["--single-file", "--output-file", "./test-output/single.yaml", "--verbose"]
+      expected_exit_code: 1
+      expected_file_created: "./test-output/single.yaml"
+      
+    - name: "clean_mode"
+      description: "Test clean mode functionality"
+      setup: "create_test_files"
+      command: ["--output", "./test-output/clean-test", "--clean", "--verbose"]
+      expected_exit_code: 1
+      expected_files_removed: ["./test-output/clean-test/test-file.txt"]
+
+  flags:
+    - name: "verbose_flag"
+      description: "Test verbose flag functionality"
+      command: ["--output", "./test-output/verbose-test", "--verbose"]
+      expected_exit_code: 1
+      expected_output_contains: ["Starting resource collection"]
+      
+    - name: "all_flags_documented"
+      description: "Test that all flags are documented in help"
+      command: ["--help"]
+      expected_exit_code: 0
+      expected_output_contains: [
+        "--kubeconfig",
+        "--output", 
+        "--file",
+        "--verbose",
+        "--single-file",
+        "--clean"
+      ]
+
+  error_handling:
+    - name: "invalid_kubeconfig_path"
+      description: "Test error handling for invalid kubeconfig path"
+      command: ["--kubeconfig", "/invalid/path"]
+      expected_exit_code: 1
+      expected_output_contains: ["kubeconfig file not found"]
+      
+    - name: "invalid_output_path"
+      description: "Test error handling for invalid output path"
+      command: ["--output", "/root/invalid/path"]
+      expected_exit_code: 1
+      
+    - name: "missing_command_tools"
+      description: "Test error handling when oc/kubectl not available"
+      command: ["--output", "./test-output/no-tools"]
+      expected_exit_code: 1
+      expected_output_contains: ["neither 'oc' nor 'kubectl' command found"]
+
+  performance:
+    - name: "execution_time"
+      description: "Test that execution completes within reasonable time"
+      command: ["--output", "./test-output/perf-test", "--verbose"]
+      expected_exit_code: 1
+      max_execution_time: "5s"
+      
+    - name: "memory_usage"
+      description: "Test memory usage is reasonable"
+      command: ["--output", "./test-output/memory-test", "--verbose"]
+      expected_exit_code: 1
+      max_memory_mb: 100
+
+  integration:
+    - name: "complete_workflow_directory"
+      description: "Test complete workflow in directory mode"
+      command: ["--output", "./test-output/integration-dir", "--verbose"]
+      expected_exit_code: 1
+      expected_directory_created: "./test-output/integration-dir"
+      
+    - name: "complete_workflow_single_file"
+      description: "Test complete workflow in single file mode"
+      command: ["--single-file", "--output-file", "./test-output/integration-single.yaml", "--verbose"]
+      expected_exit_code: 1
+      expected_file_created: "./test-output/integration-single.yaml"
+
+mock_data:
+  api_resources:
+    - "pods"
+    - "services" 
+    - "configmaps"
+    - "deployments"
+    - "replicasets"
+    
+  sample_resources:
+    pods:
+      apiVersion: v1
+      kind: List
+      items:
+        - apiVersion: v1
+          kind: Pod
+          metadata:
+            name: test-pod-1
+            namespace: default
+          spec:
+            containers:
+              - name: test-container
+                image: nginx:latest
+                
+    services:
+      apiVersion: v1
+      kind: List
+      items:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: test-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+
+test_environment:
+  cleanup_after_tests: true
+  preserve_failed_test_artifacts: true
+  parallel_execution: false
+  timeout_per_test: "30s"
+  
+output_format:
+  format: "detailed"
+  include_timing: true
+  include_memory_usage: true
+  color_output: true
+  
+reporting:
+  generate_html_report: true
+  generate_json_report: true
+  generate_junit_report: true
+  output_directory: "./test-reports"
