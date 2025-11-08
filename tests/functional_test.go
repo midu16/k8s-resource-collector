@@ -50,10 +50,10 @@ func (ts *TestSuite) AddResult(name string, passed bool, message string, err err
 func (ts *TestSuite) PrintSummary() {
 	fmt.Println("\n==================================================")
 	fmt.Println("Test Summary:")
-	
+
 	passed := 0
 	failed := 0
-	
+
 	for _, result := range ts.results {
 		if result.Passed {
 			fmt.Printf("✓ PASS: %s\n", result.Name)
@@ -66,7 +66,7 @@ func (ts *TestSuite) PrintSummary() {
 			failed++
 		}
 	}
-	
+
 	fmt.Printf("\nTests Run: %d\n", len(ts.results))
 	fmt.Printf("Tests Passed: %d\n", passed)
 	fmt.Printf("Tests Failed: %d\n", failed)
@@ -83,20 +83,20 @@ func RunCommand(args ...string) (string, error) {
 // TestBinaryExists tests if the binary exists
 func TestBinaryExists(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
 		suite.AddResult("Binary Exists", false, "Binary not found", err)
 	} else {
 		suite.AddResult("Binary Exists", true, "Binary found", nil)
 	}
-	
+
 	suite.PrintSummary()
 }
 
 // TestHelpCommand tests the help command
 func TestHelpCommand(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	output, err := RunCommand("--help")
 	if err != nil {
 		suite.AddResult("Help Command", false, "Help command failed", err)
@@ -105,28 +105,28 @@ func TestHelpCommand(t *testing.T) {
 	} else {
 		suite.AddResult("Help Command", false, "Help output format incorrect", nil)
 	}
-	
+
 	suite.PrintSummary()
 }
 
 // TestInvalidArguments tests invalid command line arguments
 func TestInvalidArguments(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	_, err := RunCommand("--unknown-flag")
 	if err != nil {
 		suite.AddResult("Invalid Arguments", true, "Correctly rejects unknown flag", nil)
 	} else {
 		suite.AddResult("Invalid Arguments", false, "Should fail with unknown flag", nil)
 	}
-	
+
 	suite.PrintSummary()
 }
 
 // TestKubeconfigValidation tests kubeconfig validation
 func TestKubeconfigValidation(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	output, err := RunCommand("--kubeconfig", "/nonexistent/path", "--verbose")
 	if err != nil {
 		if strings.Contains(output, "kubeconfig file not found") {
@@ -137,97 +137,97 @@ func TestKubeconfigValidation(t *testing.T) {
 	} else {
 		suite.AddResult("Kubeconfig Validation", false, "Should fail with non-existent kubeconfig", nil)
 	}
-	
+
 	suite.PrintSummary()
 }
 
 // TestOutputDirectoryCreation tests output directory creation
 func TestOutputDirectoryCreation(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	testDir := filepath.Join(testDir, "dir-creation-test")
-	
+
 	// Clean up any existing directory
 	os.RemoveAll(testDir)
-	
+
 	// Test directory creation
 	_, _ = RunCommand("--output", testDir, "--verbose")
-	
+
 	// Check if directory was created
 	if _, dirErr := os.Stat(testDir); dirErr == nil {
 		suite.AddResult("Output Directory Creation", true, "Directory created successfully", nil)
 	} else {
 		suite.AddResult("Output Directory Creation", false, "Directory not created", dirErr)
 	}
-	
+
 	// Clean up
 	os.RemoveAll(testDir)
-	
+
 	suite.PrintSummary()
 }
 
 // TestCleanMode tests the clean mode functionality
 func TestCleanMode(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	testDir := filepath.Join(testDir, "clean-test")
-	
+
 	// Create test directory with some files
 	os.MkdirAll(testDir, 0755)
 	testFile := filepath.Join(testDir, "test-file.txt")
 	os.WriteFile(testFile, []byte("test content"), 0644)
-	
+
 	// Test clean mode
 	_, _ = RunCommand("--output", testDir, "--clean", "--verbose")
-	
+
 	// Check if file was removed
 	if _, fileErr := os.Stat(testFile); os.IsNotExist(fileErr) {
 		suite.AddResult("Clean Mode", true, "Directory cleaned successfully", nil)
 	} else {
 		suite.AddResult("Clean Mode", false, "Directory not cleaned", fileErr)
 	}
-	
+
 	// Clean up
 	os.RemoveAll(testDir)
-	
+
 	suite.PrintSummary()
 }
 
 // TestSingleFileMode tests single file mode
 func TestSingleFileMode(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	testFile := filepath.Join(testDir, "single-file-test.yaml")
 	testDir := filepath.Dir(testFile)
-	
+
 	// Create test directory
 	os.MkdirAll(testDir, 0755)
-	
+
 	// Test single file mode
 	_, _ = RunCommand("--single-file", "--output-file", testFile, "--verbose")
-	
+
 	// Check if file was created
 	if _, fileErr := os.Stat(testFile); fileErr == nil {
 		suite.AddResult("Single File Mode", true, "Single file created successfully", nil)
 	} else {
 		suite.AddResult("Single File Mode", false, "Single file not created", fileErr)
 	}
-	
+
 	// Clean up
 	os.RemoveAll(testDir)
-	
+
 	suite.PrintSummary()
 }
 
 // TestVerboseMode tests verbose mode
 func TestVerboseMode(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	testDir := filepath.Join(testDir, "verbose-test")
-	
+
 	// Test verbose mode
 	output, err := RunCommand("--output", testDir, "--verbose")
-	
+
 	if err != nil {
 		if strings.Contains(output, "Starting resource collection") {
 			suite.AddResult("Verbose Mode", true, "Verbose output displayed correctly", nil)
@@ -237,25 +237,25 @@ func TestVerboseMode(t *testing.T) {
 	} else {
 		suite.AddResult("Verbose Mode", false, "Should fail without cluster access", nil)
 	}
-	
+
 	// Clean up
 	os.RemoveAll(testDir)
-	
+
 	suite.PrintSummary()
 }
 
 // TestFileFormatValidation tests file format validation
 func TestFileFormatValidation(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	testDir := filepath.Join(testDir, "format-test")
-	
+
 	// Create test directory
 	os.MkdirAll(testDir, 0755)
-	
+
 	// Test that the tool attempts to create YAML files
 	output, err := RunCommand("--output", testDir, "--verbose")
-	
+
 	if err != nil {
 		if strings.Contains(strings.ToLower(output), "yaml") {
 			suite.AddResult("File Format Validation", true, "Tool mentions YAML format", nil)
@@ -265,17 +265,17 @@ func TestFileFormatValidation(t *testing.T) {
 	} else {
 		suite.AddResult("File Format Validation", false, "Should fail without cluster access", nil)
 	}
-	
+
 	// Clean up
 	os.RemoveAll(testDir)
-	
+
 	suite.PrintSummary()
 }
 
 // TestCommandLineFlags tests all command line flags
 func TestCommandLineFlags(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	// Test all flags
 	flags := []string{
 		"--kubeconfig",
@@ -285,7 +285,7 @@ func TestCommandLineFlags(t *testing.T) {
 		"--single-file",
 		"--clean",
 	}
-	
+
 	for _, flag := range flags {
 		output, err := RunCommand("--help")
 		if err == nil && strings.Contains(output, flag) {
@@ -294,21 +294,21 @@ func TestCommandLineFlags(t *testing.T) {
 			suite.AddResult(fmt.Sprintf("Flag %s", flag), false, "Flag not documented in help", err)
 		}
 	}
-	
+
 	suite.PrintSummary()
 }
 
 // TestPerformance tests basic performance characteristics
 func TestPerformance(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	testDir := filepath.Join(testDir, "performance-test")
-	
+
 	// Measure execution time
 	start := time.Now()
 	_, err := RunCommand("--output", testDir, "--verbose")
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		if duration < 5*time.Second {
 			suite.AddResult("Performance", true, fmt.Sprintf("Execution completed in %v", duration), nil)
@@ -318,28 +318,28 @@ func TestPerformance(t *testing.T) {
 	} else {
 		suite.AddResult("Performance", false, "Should fail without cluster access", nil)
 	}
-	
+
 	// Clean up
 	os.RemoveAll(testDir)
-	
+
 	suite.PrintSummary()
 }
 
 // TestErrorHandling tests error handling
 func TestErrorHandling(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	// Test various error conditions
 	testCases := []struct {
-		name   string
-		args   []string
+		name        string
+		args        []string
 		expectError bool
 	}{
 		{"Invalid kubeconfig", []string{"--kubeconfig", "/invalid/path"}, true},
 		{"Invalid output directory", []string{"--output", "/root/invalid/path"}, true},
 		{"Missing required args", []string{}, true},
 	}
-	
+
 	for _, tc := range testCases {
 		_, err := RunCommand(tc.args...)
 		if tc.expectError && err != nil {
@@ -350,14 +350,14 @@ func TestErrorHandling(t *testing.T) {
 			suite.AddResult(tc.name, false, "Incorrect error handling", err)
 		}
 	}
-	
+
 	suite.PrintSummary()
 }
 
 // TestIntegration tests integration scenarios
 func TestIntegration(t *testing.T) {
 	suite := NewTestSuite()
-	
+
 	// Test complete workflow scenarios
 	scenarios := []struct {
 		name string
@@ -367,7 +367,7 @@ func TestIntegration(t *testing.T) {
 		{"Single File Mode", []string{"--single-file", "--output-file", filepath.Join(testDir, "integration-single.yaml"), "--verbose"}},
 		{"Clean Mode", []string{"--output", filepath.Join(testDir, "integration-clean"), "--clean", "--verbose"}},
 	}
-	
+
 	for _, scenario := range scenarios {
 		_, err := RunCommand(scenario.args...)
 		// We expect these to fail due to no cluster access, but they should handle the failure gracefully
@@ -377,10 +377,10 @@ func TestIntegration(t *testing.T) {
 			suite.AddResult(scenario.name, false, "Should fail without cluster access", nil)
 		}
 	}
-	
+
 	// Clean up
 	os.RemoveAll(testDir)
-	
+
 	suite.PrintSummary()
 }
 
@@ -388,19 +388,19 @@ func TestIntegration(t *testing.T) {
 func TestMain(m *testing.M) {
 	fmt.Println("Starting Enhanced Functional Testing for k8s-resource-collector")
 	fmt.Println("==================================================")
-	
+
 	// Create test directory
 	os.MkdirAll(testDir, 0755)
-	
+
 	// Run tests
 	code := m.Run()
-	
+
 	// Clean up
 	os.RemoveAll(testDir)
-	
+
 	fmt.Println("\n==================================================")
 	fmt.Println("All tests completed!")
 	fmt.Println("==================================================")
-	
+
 	os.Exit(code)
 }

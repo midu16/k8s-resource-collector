@@ -4,9 +4,9 @@
 *.dll
 *.so
 *.dylib
-./bin/k8s-resource-collector
+bin/k8s-resource-collector
 oc-collect-resources
-./bin/k8s-resource-collector-*
+bin/k8s-resource-collector-*
 
 # Test binary, built with `go test -c`
 *.test
