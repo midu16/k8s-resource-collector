@@ -3,8 +3,62 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
 )
+
+var kubeconfig string
+
+type ResourceCollector struct {
+	outputDir string
+	verbose   bool
+}
+
+func getKubeConfig() (*rest.Config, error) {
+	var kubeconfigPath string
+
+	// Priority: flag > environment variable > default location
+	if kubeconfig != "" {
+		kubeconfigPath = kubeconfig
+	} else if envKubeconfig := os.Getenv("KUBECONFIG"); envKubeconfig != "" {
+		kubeconfigPath = envKubeconfig
+	} else {
+		kubeconfigPath = filepath.Join(homedir.HomeDir(), ".kube", "config")
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
+		return nil, err
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+func sanitizeFilename(name string) string {
+	// Replace characters that are not safe for filenames
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"*", "-",
+		"?", "-",
+		"\"", "-",
+		"<", "-",
+		">", "-",
+		"|", "-",
+		" ", "-",
+	)
+	return replacer.Replace(name)
+}
 
 func TestSanitizeFilename(t *testing.T) {
 	tests := []struct {
@@ -25,6 +79,15 @@ func TestSanitizeFilename(t *testing.T) {
 			t.Errorf("sanitizeFilename(%s) = %s, expected %s", test.input, result, test.expected)
 		}
 	}
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 func TestContains(t *testing.T) {

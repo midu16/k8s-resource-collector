@@ -1,58 +1,59 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
-	"github.com/midu/k8s-resource-collector/pkg"
-	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+	"sigs.k8s.io/yaml"
 )
 
 var (
-	kubeconfig string
-	outputDir  string
-	outputFile string
-	verbose    bool
-	singleFile bool
-	clean      bool
+	kubeconfig  string
+	kubeconfig1 string
+	kubeconfig2 string
+	outputDir   string
+	outputFile  string
+	verbose     bool
+	singleFile  bool
+	clean       bool
+	compareMode bool
 )
 
 func main() {
-	var rootCmd = &cobra.Command{
-		Use:   "k8s-resource-collector",
-		Short: "Collect all Kubernetes API resources and save them as YAML files",
-		Long: `A tool that discovers all API resources in a Kubernetes/OpenShift cluster
-and saves each resource type as a separate YAML file or all resources to a single file.
-Can be used as an oc plugin.
+	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: $KUBECONFIG or ~/.kube/config)")
+	flag.StringVar(&kubeconfig1, "kubeconfig1", "", "Path to first kubeconfig for cluster comparison")
+	flag.StringVar(&kubeconfig2, "kubeconfig2", "", "Path to second kubeconfig for cluster comparison")
+	flag.StringVar(&outputDir, "output", "./output", "Output directory for collected resources")
+	flag.StringVar(&outputFile, "file", "", "Output file for single file mode")
+	flag.BoolVar(&verbose, "verbose", false, "Enable verbose output")
+	flag.BoolVar(&singleFile, "single-file", false, "Collect all resources to a single YAML file")
+	flag.BoolVar(&clean, "clean", false, "Clean output directory before collection")
+	flag.BoolVar(&compareMode, "compare", false, "Enable comparison mode (requires kubeconfig1 and kubeconfig2)")
+	flag.Parse()
 
-This tool replicates the functionality of:
-for r in $(oc api-resources --verbs=list,get -o name | sort -u); do
-  echo "--- # Resource: $r" >> all-resources.yaml
-  oc get "$r" --all-namespaces -o yaml >> all-resources.yaml 2>/dev/null
-done`,
-		RunE: runCollector,
-	}
-
-	rootCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: $KUBECONFIG or ~/.kube/config)")
-	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "./output", "Output directory for collected resources")
-	rootCmd.Flags().StringVarP(&outputFile, "file", "f", "", "Output file for single file mode (overrides output directory)")
-	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
-	rootCmd.Flags().BoolVar(&singleFile, "single-file", false, "Collect all resources to a single YAML file")
-	rootCmd.Flags().BoolVar(&clean, "clean", false, "Clean output directory before collection")
-
-	if err := rootCmd.Execute(); err != nil {
+	if err := runCollector(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func runCollector(cmd *cobra.Command, args []string) error {
-	// Initialize tools
-	vibeTools := pkg.NewVibeTools(verbose)
-	formatter := pkg.NewFormatter()
+func runCollector() error {
+	// Check if comparison mode is enabled
+	if compareMode || (kubeconfig1 != "" && kubeconfig2 != "") {
+		return runComparisonMode()
+	}
 
 	// Determine output mode
 	if outputFile != "" {
@@ -61,18 +62,19 @@ func runCollector(cmd *cobra.Command, args []string) error {
 		outputFile = "./output/all-resources.yaml"
 	}
 
+	// Use kubeconfig1 if provided, otherwise fall back to kubeconfig
+	configPath := kubeconfig
+	if kubeconfig1 != "" {
+		configPath = kubeconfig1
+	}
+
 	// Parse kubeconfig
-	config, err := pkg.ParseKubeConfig(kubeconfig)
+	config, err := parseKubeConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to get kubeconfig: %w", err)
 	}
 
 	// Create clients
-	client, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create kubernetes client: %w", err)
-	}
-
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
 		return fmt.Errorf("failed to create discovery client: %w", err)
@@ -83,9 +85,6 @@ func runCollector(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	// Create parser
-	parser := pkg.NewParser(client, discoveryClient, dynamicClient, formatter, verbose)
-
 	if singleFile {
 		// Single file mode
 		if outputFile == "" {
@@ -93,8 +92,7 @@ func runCollector(cmd *cobra.Command, args []string) error {
 		}
 
 		// Ensure output directory exists
-		outputDir := fmt.Sprintf("%s", outputFile)
-		if err := vibeTools.EnsureDirectory(outputDir); err != nil {
+		if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
 			return fmt.Errorf("failed to create output directory: %w", err)
 		}
 
@@ -105,21 +103,568 @@ func runCollector(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		return parser.CollectAllResourcesToSingleFile(outputFile)
+		return collectAllResourcesToSingleFile(discoveryClient, dynamicClient, outputFile)
 	} else {
 		// Directory mode
 		// Ensure output directory exists
-		if err := vibeTools.EnsureDirectory(outputDir); err != nil {
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
 			return fmt.Errorf("failed to create output directory: %w", err)
 		}
 
 		// Clean directory if requested
 		if clean {
-			if err := vibeTools.CleanDirectory(outputDir); err != nil {
+			if err := cleanDirectory(outputDir); err != nil {
 				return fmt.Errorf("failed to clean output directory: %w", err)
 			}
 		}
 
-		return parser.CollectResources(outputDir)
+		return collectResources(discoveryClient, dynamicClient, outputDir)
 	}
+}
+
+func parseKubeConfig(kubeconfigPath string) (*rest.Config, error) {
+	var configPath string
+
+	// Priority: flag > environment variable > default location
+	if kubeconfigPath != "" {
+		configPath = kubeconfigPath
+	} else if envKubeconfig := os.Getenv("KUBECONFIG"); envKubeconfig != "" {
+		configPath = envKubeconfig
+	} else {
+		configPath = filepath.Join(homedir.HomeDir(), ".kube", "config")
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("kubeconfig file not found at %s", configPath)
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
+	}
+
+	return config, nil
+}
+
+func collectResources(discovery discovery.DiscoveryInterface, dynamic dynamic.Interface, outputDir string) error {
+	startTime := time.Now()
+
+	if verbose {
+		fmt.Printf("Starting resource collection to directory: %s\n", outputDir)
+	}
+
+	// Get all API resources
+	resources, err := discovery.ServerPreferredResources()
+	if err != nil {
+		return fmt.Errorf("failed to discover API resources: %w", err)
+	}
+
+	collectedCount := 0
+	errorCount := 0
+
+	for _, resourceList := range resources {
+		for _, resource := range resourceList.APIResources {
+			// Skip subresources
+			if strings.Contains(resource.Name, "/") {
+				continue
+			}
+
+			// Only collect resources that support list and get verbs
+			if !contains(resource.Verbs, "list") || !contains(resource.Verbs, "get") {
+				continue
+			}
+
+			if verbose {
+				fmt.Printf("Collecting resource: %s\n", resource.Name)
+			}
+
+			err := collectResource(dynamic, resource, resourceList.GroupVersion, outputDir)
+			if err != nil {
+				if verbose {
+					fmt.Printf("  %s: ERROR - %v\n", resource.Name, err)
+				}
+				errorCount++
+			} else {
+				collectedCount++
+			}
+		}
+	}
+
+	// Print summary
+	duration := time.Since(startTime)
+	fmt.Printf("\n=== Collection Summary ===\n")
+	fmt.Printf("Successfully collected: %d resources\n", collectedCount)
+	fmt.Printf("Errors encountered: %d resources\n", errorCount)
+	fmt.Printf("Output directory: %s\n", outputDir)
+	fmt.Printf("Duration: %v\n", duration)
+	fmt.Printf("========================\n")
+
+	return nil
+}
+
+func collectResource(dynamic dynamic.Interface, resource metav1.APIResource, groupVersion string, outputDir string) error {
+	// Parse group version
+	gv, err := schema.ParseGroupVersion(groupVersion)
+	if err != nil {
+		return fmt.Errorf("failed to parse group version: %w", err)
+	}
+
+	// Create GVR
+	gvr := schema.GroupVersionResource{
+		Group:    gv.Group,
+		Version:  gv.Version,
+		Resource: resource.Name,
+	}
+
+	// Get all instances of this resource across all namespaces
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	unstructuredList, err := dynamic.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get resource instances for %s: %w", resource.Name, err)
+	}
+
+	// Convert to YAML
+	yamlData, err := yaml.Marshal(unstructuredList)
+	if err != nil {
+		return fmt.Errorf("failed to marshal %s to YAML: %w", resource.Name, err)
+	}
+
+	// Create filename and path
+	filename := formatFilename(resource.Name, groupVersion)
+	filePath := filepath.Join(outputDir, filename)
+
+	// Create header
+	header := formatHeader(resource.Name, groupVersion)
+	finalYaml := header + string(yamlData)
+
+	// Write to file
+	err = os.WriteFile(filePath, []byte(finalYaml), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write file %s: %w", filePath, err)
+	}
+
+	if verbose {
+		fmt.Printf("  %s: SUCCESS - Saved to %s\n", resource.Name, filePath)
+	}
+
+	return nil
+}
+
+func collectAllResourcesToSingleFile(discovery discovery.DiscoveryInterface, dynamic dynamic.Interface, outputFile string) error {
+	startTime := time.Now()
+
+	if verbose {
+		fmt.Printf("Starting resource collection to single file: %s\n", outputFile)
+	}
+
+	// Get all API resources
+	resources, err := discovery.ServerPreferredResources()
+	if err != nil {
+		return fmt.Errorf("failed to discover API resources: %w", err)
+	}
+
+	var allResourcesYaml strings.Builder
+	collectedCount := 0
+	errorCount := 0
+
+	for _, resourceList := range resources {
+		for _, resource := range resourceList.APIResources {
+			// Skip subresources
+			if strings.Contains(resource.Name, "/") {
+				continue
+			}
+
+			// Only collect resources that support list and get verbs
+			if !contains(resource.Verbs, "list") || !contains(resource.Verbs, "get") {
+				continue
+			}
+
+			if verbose {
+				fmt.Printf("Collecting resource: %s\n", resource.Name)
+			}
+
+			err := collectResourceToBuffer(dynamic, resource, resourceList.GroupVersion, &allResourcesYaml)
+			if err != nil {
+				if verbose {
+					fmt.Printf("  %s: ERROR - %v\n", resource.Name, err)
+				}
+				errorCount++
+			} else {
+				collectedCount++
+			}
+		}
+	}
+
+	// Write all resources to file
+	err = os.WriteFile(outputFile, []byte(allResourcesYaml.String()), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write file %s: %w", outputFile, err)
+	}
+
+	// Print summary
+	duration := time.Since(startTime)
+	fmt.Printf("\n=== Collection Summary ===\n")
+	fmt.Printf("Successfully collected: %d resources\n", collectedCount)
+	fmt.Printf("Errors encountered: %d resources\n", errorCount)
+	fmt.Printf("Output file: %s\n", outputFile)
+	fmt.Printf("Duration: %v\n", duration)
+	fmt.Printf("========================\n")
+
+	return nil
+}
+
+func collectResourceToBuffer(dynamic dynamic.Interface, resource metav1.APIResource, groupVersion string, buffer *strings.Builder) error {
+	// Parse group version
+	gv, err := schema.ParseGroupVersion(groupVersion)
+	if err != nil {
+		return fmt.Errorf("failed to parse group version: %w", err)
+	}
+
+	// Create GVR
+	gvr := schema.GroupVersionResource{
+		Group:    gv.Group,
+		Version:  gv.Version,
+		Resource: resource.Name,
+	}
+
+	// Get all instances of this resource across all namespaces
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	unstructuredList, err := dynamic.Resource(gvr).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get resource instances for %s: %w", resource.Name, err)
+	}
+
+	// Convert to YAML
+	yamlData, err := yaml.Marshal(unstructuredList)
+	if err != nil {
+		return fmt.Errorf("failed to marshal %s to YAML: %w", resource.Name, err)
+	}
+
+	// Add resource comment
+	buffer.WriteString(fmt.Sprintf("--- # Resource: %s\n", resource.Name))
+	buffer.WriteString(string(yamlData))
+	buffer.WriteString("\n")
+
+	return nil
+}
+
+func formatFilename(resourceName string, groupVersion string) string {
+	// Replace characters that are not safe for filenames
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"*", "-",
+		"?", "-",
+		"\"", "-",
+		"<", "-",
+		">", "-",
+		"|", "-",
+		" ", "-",
+	)
+
+	sanitizedName := replacer.Replace(resourceName)
+
+	if groupVersion != "" {
+		// Add group version to filename
+		sanitizedGroupVersion := replacer.Replace(groupVersion)
+		return fmt.Sprintf("%s-%s.yaml", sanitizedGroupVersion, sanitizedName)
+	}
+
+	return fmt.Sprintf("%s.yaml", sanitizedName)
+}
+
+func formatHeader(resourceName string, groupVersion string) string {
+	var header strings.Builder
+
+	header.WriteString("# Generated by k8s-resource-collector\n")
+	header.WriteString(fmt.Sprintf("# Generated at: %s\n", time.Now().Format(time.RFC3339)))
+	header.WriteString(fmt.Sprintf("# Resource: %s\n", resourceName))
+	if groupVersion != "" {
+		header.WriteString(fmt.Sprintf("# Group Version: %s\n", groupVersion))
+	}
+	header.WriteString("# ---\n\n")
+
+	return header.String()
+}
+
+func cleanDirectory(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil // Directory doesn't exist, nothing to clean
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("failed to read directory %s: %w", path, err)
+	}
+
+	for _, entry := range entries {
+		entryPath := filepath.Join(path, entry.Name())
+		if err := os.RemoveAll(entryPath); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", entryPath, err)
+		}
+		if verbose {
+			fmt.Printf("Removed: %s\n", entryPath)
+		}
+	}
+
+	return nil
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// runComparisonMode collects resources from two clusters and generates a diff
+func runComparisonMode() error {
+	if kubeconfig1 == "" || kubeconfig2 == "" {
+		return fmt.Errorf("comparison mode requires both --kubeconfig1 and --kubeconfig2 to be specified")
+	}
+
+	fmt.Println("=== Multi-Cluster Comparison Mode ===")
+	fmt.Printf("Cluster 1: %s\n", kubeconfig1)
+	fmt.Printf("Cluster 2: %s\n", kubeconfig2)
+	fmt.Println()
+
+	// Get cluster names
+	clusterName1, err := getClusterName(kubeconfig1)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster name from kubeconfig1: %w", err)
+	}
+
+	clusterName2, err := getClusterName(kubeconfig2)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster name from kubeconfig2: %w", err)
+	}
+
+	// Create comparison output directory
+	compareDir := filepath.Join(outputDir, "comparison")
+	if err := os.MkdirAll(compareDir, 0755); err != nil {
+		return fmt.Errorf("failed to create comparison directory: %w", err)
+	}
+
+	// Collect from cluster 1
+	fmt.Printf("\n[1/3] Collecting from cluster 1: %s\n", clusterName1)
+	outputFile1 := filepath.Join(compareDir, fmt.Sprintf("%s-resources.yaml", sanitizeClusterName(clusterName1)))
+	if err := collectFromCluster(kubeconfig1, outputFile1); err != nil {
+		return fmt.Errorf("failed to collect from cluster 1: %w", err)
+	}
+	fmt.Printf("✓ Saved to: %s\n", outputFile1)
+
+	// Collect from cluster 2
+	fmt.Printf("\n[2/3] Collecting from cluster 2: %s\n", clusterName2)
+	outputFile2 := filepath.Join(compareDir, fmt.Sprintf("%s-resources.yaml", sanitizeClusterName(clusterName2)))
+	if err := collectFromCluster(kubeconfig2, outputFile2); err != nil {
+		return fmt.Errorf("failed to collect from cluster 2: %w", err)
+	}
+	fmt.Printf("✓ Saved to: %s\n", outputFile2)
+
+	// Generate diff
+	fmt.Printf("\n[3/3] Generating difference report...\n")
+	diffFile := filepath.Join(compareDir, fmt.Sprintf("diff-%s-vs-%s.txt",
+		sanitizeClusterName(clusterName1),
+		sanitizeClusterName(clusterName2)))
+
+	if err := generateDiff(outputFile1, outputFile2, diffFile, clusterName1, clusterName2); err != nil {
+		return fmt.Errorf("failed to generate diff: %w", err)
+	}
+	fmt.Printf("✓ Diff saved to: %s\n", diffFile)
+
+	fmt.Println("\n=== Comparison Complete ===")
+	fmt.Printf("Cluster 1 (%s): %s\n", clusterName1, outputFile1)
+	fmt.Printf("Cluster 2 (%s): %s\n", clusterName2, outputFile2)
+	fmt.Printf("Difference:     %s\n", diffFile)
+
+	return nil
+}
+
+// getClusterName extracts the cluster name from kubeconfig
+func getClusterName(kubeconfigPath string) (string, error) {
+	config, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Get current context
+	currentContext := config.CurrentContext
+	if currentContext == "" {
+		return "", fmt.Errorf("no current context set in kubeconfig")
+	}
+
+	// Get context details
+	context, exists := config.Contexts[currentContext]
+	if !exists {
+		return "", fmt.Errorf("context %s not found in kubeconfig", currentContext)
+	}
+
+	// Return cluster name
+	if context.Cluster != "" {
+		return context.Cluster, nil
+	}
+
+	return currentContext, nil
+}
+
+// sanitizeClusterName sanitizes cluster name for use in filenames
+func sanitizeClusterName(name string) string {
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"*", "-",
+		"?", "-",
+		"\"", "-",
+		"<", "-",
+		">", "-",
+		"|", "-",
+		" ", "-",
+		".", "-",
+	)
+	return replacer.Replace(name)
+}
+
+// collectFromCluster collects resources from a specific cluster
+func collectFromCluster(kubeconfigPath string, outputFile string) error {
+	config, err := parseKubeConfig(kubeconfigPath)
+	if err != nil {
+		return err
+	}
+
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	return collectAllResourcesToSingleFile(discoveryClient, dynamicClient, outputFile)
+}
+
+// generateDiff generates a diff between two resource files
+func generateDiff(file1, file2, outputFile, cluster1Name, cluster2Name string) error {
+	// Read both files
+	content1, err := os.ReadFile(file1)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", file1, err)
+	}
+
+	content2, err := os.ReadFile(file2)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", file2, err)
+	}
+
+	// Parse YAML resources from both files
+	resources1 := parseResources(string(content1))
+	resources2 := parseResources(string(content2))
+
+	// Generate diff report
+	var diff strings.Builder
+	diff.WriteString(fmt.Sprintf("=== Cluster Comparison Report ===\n"))
+	diff.WriteString(fmt.Sprintf("Generated at: %s\n", time.Now().Format(time.RFC3339)))
+	diff.WriteString(fmt.Sprintf("Cluster 1: %s (%d resources)\n", cluster1Name, len(resources1)))
+	diff.WriteString(fmt.Sprintf("Cluster 2: %s (%d resources)\n\n", cluster2Name, len(resources2)))
+
+	// Find resources only in cluster 1
+	onlyInCluster1 := findUniqueResources(resources1, resources2)
+	if len(onlyInCluster1) > 0 {
+		diff.WriteString(fmt.Sprintf("\n=== Resources only in %s ===\n", cluster1Name))
+		for _, resource := range onlyInCluster1 {
+			diff.WriteString(fmt.Sprintf("- %s\n", resource))
+		}
+	}
+
+	// Find resources only in cluster 2
+	onlyInCluster2 := findUniqueResources(resources2, resources1)
+	if len(onlyInCluster2) > 0 {
+		diff.WriteString(fmt.Sprintf("\n=== Resources only in %s ===\n", cluster2Name))
+		for _, resource := range onlyInCluster2 {
+			diff.WriteString(fmt.Sprintf("- %s\n", resource))
+		}
+	}
+
+	// Find common resources
+	commonResources := findCommonResources(resources1, resources2)
+	if len(commonResources) > 0 {
+		diff.WriteString(fmt.Sprintf("\n=== Common resources in both clusters ===\n"))
+		diff.WriteString(fmt.Sprintf("Total: %d resources\n", len(commonResources)))
+	}
+
+	// Summary
+	diff.WriteString(fmt.Sprintf("\n=== Summary ===\n"))
+	diff.WriteString(fmt.Sprintf("Total resources in %s: %d\n", cluster1Name, len(resources1)))
+	diff.WriteString(fmt.Sprintf("Total resources in %s: %d\n", cluster2Name, len(resources2)))
+	diff.WriteString(fmt.Sprintf("Only in %s: %d\n", cluster1Name, len(onlyInCluster1)))
+	diff.WriteString(fmt.Sprintf("Only in %s: %d\n", cluster2Name, len(onlyInCluster2)))
+	diff.WriteString(fmt.Sprintf("Common to both: %d\n", len(commonResources)))
+
+	// Write diff to file
+	return os.WriteFile(outputFile, []byte(diff.String()), 0644)
+}
+
+// parseResources extracts resource identifiers from YAML content
+func parseResources(content string) []string {
+	var resources []string
+	lines := strings.Split(content, "\n")
+
+	for _, line := range lines {
+		// Look for resource markers (e.g., "--- # Resource: pods")
+		if strings.HasPrefix(strings.TrimSpace(line), "--- # Resource:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				resource := strings.TrimSpace(parts[1])
+				resources = append(resources, resource)
+			}
+		}
+	}
+
+	return resources
+}
+
+// findUniqueResources finds resources in set1 that are not in set2
+func findUniqueResources(set1, set2 []string) []string {
+	set2Map := make(map[string]bool)
+	for _, item := range set2 {
+		set2Map[item] = true
+	}
+
+	var unique []string
+	for _, item := range set1 {
+		if !set2Map[item] {
+			unique = append(unique, item)
+		}
+	}
+
+	return unique
+}
+
+// findCommonResources finds resources present in both sets
+func findCommonResources(set1, set2 []string) []string {
+	set2Map := make(map[string]bool)
+	for _, item := range set2 {
+		set2Map[item] = true
+	}
+
+	var common []string
+	seen := make(map[string]bool)
+	for _, item := range set1 {
+		if set2Map[item] && !seen[item] {
+			common = append(common, item)
+			seen[item] = true
+		}
+	}
+
+	return common
 }

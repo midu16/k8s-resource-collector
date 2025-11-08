@@ -151,7 +151,7 @@ func TestOutputDirectoryCreation(t *testing.T) {
 	os.RemoveAll(testDir)
 	
 	// Test directory creation
-	output, err := RunCommand("--output", testDir, "--verbose")
+	_, _ = RunCommand("--output", testDir, "--verbose")
 	
 	// Check if directory was created
 	if _, dirErr := os.Stat(testDir); dirErr == nil {
@@ -178,7 +178,7 @@ func TestCleanMode(t *testing.T) {
 	os.WriteFile(testFile, []byte("test content"), 0644)
 	
 	// Test clean mode
-	_, err := RunCommand("--output", testDir, "--clean", "--verbose")
+	_, _ = RunCommand("--output", testDir, "--clean", "--verbose")
 	
 	// Check if file was removed
 	if _, fileErr := os.Stat(testFile); os.IsNotExist(fileErr) {
@@ -204,7 +204,7 @@ func TestSingleFileMode(t *testing.T) {
 	os.MkdirAll(testDir, 0755)
 	
 	// Test single file mode
-	_, err := RunCommand("--single-file", "--output-file", testFile, "--verbose")
+	_, _ = RunCommand("--single-file", "--output-file", testFile, "--verbose")
 	
 	// Check if file was created
 	if _, fileErr := os.Stat(testFile); fileErr == nil {

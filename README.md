@@ -15,34 +15,47 @@ done
   - Directory mode: Creates individual YAML files for each resource type
   - Single file mode: Creates one file with all resources (like the original script)
   - Import mode: Splits existing all-resources.yaml files into individual ClusterResource files
+- **Multi-Cluster Comparison**: Compare resources between two Kubernetes clusters and generate diff reports
 - **Flexible Configuration**: Supports `--kubeconfig` flag or `KUBECONFIG` environment variable
 - **Verbose Logging**: Optional detailed output during collection
 - **Clean Mode**: Option to clean output directories before collection
 - **Cross-Platform**: Works on Linux, macOS, and Windows
 - **Container Support**: Includes Dockerfile for containerized deployment
-- **No External Dependencies**: Uses only standard library packages
+- **Native Kubernetes Client**: Uses official k8s.io/client-go libraries
 
 ## Project Structure
 
 ```
 k8s-resource-collector/
-├── bin/                           # Binary output directory
-│   └── k8s-resource-collector    # Compiled binary
-├── cmd/                          # Source code
-│   ├── main.go                   # Original Cobra-based main.go
-│   ├── main.go.backup           # Backup of original main.go
-│   ├── main_simple.go           # Simplified version with Kubernetes client-go
-│   └── main_standalone.go       # ✅ Working standalone version (recommended)
-├── internal/                     # Internal packages (empty for now)
-├── output/                       # Default output directory
-├── output-custom/                # Custom output directory
-├── output-import/                # Import mode output directory
-├── Dockerfile                    # Container build file
-├── Makefile                      # Build system
-├── go.mod                        # Go module dependencies
-├── go.sum                        # Dependency checksums
-├── README.md                     # This file
-└── run-container-example.sh     # Container run example
+├── bin/                              # Binary output directory
+│   └── k8s-resource-collector        # Compiled binary
+├── cmd/                              # Application source code
+│   └── main.go                       # Main application (native Kubernetes client)
+├── tests/                            # Test suite
+│   ├── functional_test.go            # Go-based functional tests
+│   ├── test_runner.sh                # Comprehensive test runner
+│   ├── simple_test_runner.sh         # Simple test runner
+│   ├── test_config.yaml              # Test configuration
+│   └── README.md                     # Testing documentation
+├── CLUSTER_COMPARISON.md             # Multi-cluster comparison guide
+├── collector_test.go                 # Unit tests
+├── Dockerfile                        # Container build file
+├── go.mod                            # Go module dependencies
+├── go.sum                            # Dependency checksums
+├── LICENSE                           # MIT License
+├── Makefile                          # Build system
+├── README.md                         # This file
+└── run-container-example.sh          # Container usage example
+```
+
+### Output Directories (created at runtime)
+```
+output/                               # Default collection output
+├── comparison/                       # Multi-cluster comparison results
+│   ├── {cluster1}-resources.yaml
+│   ├── {cluster2}-resources.yaml
+│   └── diff-{cluster1}-vs-{cluster2}.txt
+└── *.yaml                            # Individual resource files
 ```
 
 ## Quick Start
@@ -59,30 +72,21 @@ make build
 # Collect resources to individual files
 ./bin/k8s-resource-collector --verbose --output ./output
 
-# Collect all resources to a single file (like original script)
-./bin/k8s-resource-collector --single-file --output-file ./output/all-resources.yaml
+# Collect all resources to a single file
+./bin/k8s-resource-collector --single-file --file ./output/all-resources.yaml
 
 # Use with custom kubeconfig
 ./bin/k8s-resource-collector --kubeconfig /path/to/kubeconfig --verbose
 
-# Import and split existing all-resources.yaml file
-./bin/k8s-resource-collector --import all-resources.yaml --verbose
+# Compare resources between two clusters
+./bin/k8s-resource-collector --kubeconfig1 ~/.kube/config-prod --kubeconfig2 ~/.kube/config-staging
 ```
 
-### Available Versions
+## Collection Modes
 
-The project includes multiple versions of the main.go file:
-
-1. **`main_standalone.go`** (✅ **Recommended**): Uses only standard library packages and executes `oc`/`kubectl` commands directly. No external dependencies required.
-
-2. **`main_simple.go`**: Uses Kubernetes client-go libraries for direct API access.
-
-3. **`main.go`**: Original Cobra-based version with full modular architecture.
-
-## Usage Examples
-
-### Directory Mode
+### 1. Directory Mode (Default)
 Creates individual YAML files for each resource type:
+
 ```bash
 ./bin/k8s-resource-collector --verbose --output ./output
 ```
@@ -90,17 +94,18 @@ Creates individual YAML files for each resource type:
 Output:
 ```
 output/
-├── pods.yaml
-├── services.yaml
-├── configmaps.yaml
-├── deployments.yaml
+├── v1-pods.yaml
+├── v1-services.yaml
+├── v1-configmaps.yaml
+├── apps-v1-deployments.yaml
 └── ...
 ```
 
-### Single File Mode
+### 2. Single File Mode
 Creates one file with all resources (replicates original script):
+
 ```bash
-./bin/k8s-resource-collector --single-file --output-file ./output/all-resources.yaml
+./bin/k8s-resource-collector --single-file --file ./output/all-resources.yaml
 ```
 
 Output:
@@ -129,41 +134,96 @@ items:
 ---
 ```
 
-### Import Mode
-Splits existing all-resources.yaml files into individual ClusterResource files:
+### 3. Multi-Cluster Comparison Mode
+Compare resources between two Kubernetes clusters:
+
 ```bash
-./bin/k8s-resource-collector --import all-resources.yaml --verbose
+# Basic comparison
+./bin/k8s-resource-collector \
+  --kubeconfig1 ~/.kube/config-cluster1 \
+  --kubeconfig2 ~/.kube/config-cluster2
+
+# With verbose output
+./bin/k8s-resource-collector \
+  --kubeconfig1 ~/.kube/prod-config \
+  --kubeconfig2 ~/.kube/staging-config \
+  --verbose
+
+# Custom output directory
+./bin/k8s-resource-collector \
+  --kubeconfig1 ~/.kube/config1 \
+  --kubeconfig2 ~/.kube/config2 \
+  --output ./my-comparison
 ```
 
 Output:
 ```
-output-import/
-├── pods.yaml
-├── services.yaml
-├── configmaps.yaml
-├── deployments.yaml
-└── ...
+output/comparison/
+├── prod-cluster-resources.yaml                    # All resources from cluster 1
+├── staging-cluster-resources.yaml                 # All resources from cluster 2
+└── diff-prod-cluster-vs-staging-cluster.txt       # Difference report
 ```
 
-Each file contains the ClusterResource data with proper headers:
-```yaml
-# Generated by k8s-resource-collector
-# Generated at: 2025-09-10T17:52:20+02:00
-# Resource: pods
-# ---
+The diff report includes:
+- Resources only in cluster 1
+- Resources only in cluster 2
+- Common resources in both clusters
+- Statistical summary
 
-apiVersion: v1
-kind: List
-items:
-- apiVersion: v1
-  kind: Pod
-  metadata:
-    name: example-pod
-    namespace: default
-  ...
+**📘 For detailed documentation, see [CLUSTER_COMPARISON.md](CLUSTER_COMPARISON.md)**
+
+## Command Line Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--kubeconfig` | Path to kubeconfig file | `$KUBECONFIG` or `~/.kube/config` |
+| `--kubeconfig1` | First kubeconfig for comparison | - |
+| `--kubeconfig2` | Second kubeconfig for comparison | - |
+| `--output` | Output directory | `./output` |
+| `--file` | Output file for single file mode | - |
+| `--verbose` | Enable verbose output | `false` |
+| `--single-file` | Collect to a single YAML file | `false` |
+| `--clean` | Clean output directory before collection | `false` |
+| `--compare` | Enable comparison mode | `false` |
+
+## Example Workflows
+
+### Scenario 1: Regular Collection
+```bash
+# Collect all resources from current cluster
+./bin/k8s-resource-collector --verbose --output ./my-output
 ```
 
-### Verbose Output
+### Scenario 2: Production Backup
+```bash
+# Create a single-file backup of production cluster
+./bin/k8s-resource-collector \
+  --kubeconfig ~/.kube/prod-config \
+  --single-file \
+  --file ./backups/prod-$(date +%Y%m%d).yaml \
+  --verbose
+```
+
+### Scenario 3: Environment Comparison
+```bash
+# Compare prod vs staging
+./bin/k8s-resource-collector \
+  --kubeconfig1 ~/.kube/prod-config \
+  --kubeconfig2 ~/.kube/staging-config \
+  --output ./comparison \
+  --verbose
+```
+
+### Scenario 4: Multi-Region Validation
+```bash
+# Verify consistency across regions
+./bin/k8s-resource-collector \
+  --kubeconfig1 ~/.kube/us-east-config \
+  --kubeconfig2 ~/.kube/eu-west-config
+```
+
+## Verbose Output Example
+
 ```bash
 ./bin/k8s-resource-collector --verbose --output ./output
 ```
@@ -172,9 +232,9 @@ Output:
 ```
 Starting resource collection to directory: ./output
 Collecting resource: pods
-  pods: SUCCESS - Saved to ./output/pods.yaml
+  pods: SUCCESS - Saved to ./output/v1-pods.yaml
 Collecting resource: services
-  services: SUCCESS - Saved to ./output/services.yaml
+  services: SUCCESS - Saved to ./output/v1-services.yaml
 
 === Collection Summary ===
 Successfully collected: 45 resources
@@ -184,48 +244,12 @@ Duration: 2m30s
 ========================
 ```
 
-## Command Line Options
-
-- `--kubeconfig`: Path to kubeconfig file (default: $KUBECONFIG or ~/.kube/config)
-- `--output`: Output directory for collected resources (default: "./output")
-- `--file`: Output file for single file mode
-- `--verbose`: Enable verbose output
-- `--single-file`: Collect all resources to a single YAML file
-- `--clean`: Clean output directory before collection
-
-## Container Usage
-
-### Build Container
-```bash
-docker build -t k8s-resource-collector .
-```
-
-### Run Container
-```bash
-# Directory mode
-docker run --rm \
-  -v "$KUBECONFIG:/root/.kube/config:ro" \
-  -v "$(pwd)/output:/app/output" \
-  k8s-resource-collector \
-  --verbose --output /app/output
-
-# Single file mode
-docker run --rm \
-  -v "$KUBECONFIG:/root/.kube/config:ro" \
-  -v "$(pwd)/output:/app/output" \
-  k8s-resource-collector \
-  --single-file --output-file /app/output/all-resources.yaml
-```
-
-### Using the Example Script
-```bash
-chmod +x run-container-example.sh
-./run-container-example.sh
-```
-
 ## Development
 
 ### Build System
+
+The project uses a comprehensive Makefile with multiple targets:
+
 ```bash
 # Build binary
 make build
@@ -233,8 +257,17 @@ make build
 # Build for multiple platforms
 make build-all
 
-# Test binary
-make test-binary
+# Run unit tests
+make test-unit
+
+# Run all tests
+make test-all
+
+# Format code
+make fmt
+
+# Run linters
+make lint
 
 # Clean build artifacts
 make clean
@@ -244,17 +277,77 @@ make help
 ```
 
 ### Testing
+
 ```bash
-# Test the binary
-make test-binary
+# Run unit tests
+go test -v ./...
+
+# Run unit tests with coverage
+make test-unit
+
+# Run functional tests
+make test-go
+
+# Run all tests
+make test-all
 ```
 
 ## Requirements
 
-- Go 1.21+
-- `oc` or `kubectl` command available in PATH
-- Access to a Kubernetes/OpenShift cluster
-- Valid kubeconfig file
+- **Go**: Version 1.21 or higher
+- **Kubernetes/OpenShift**: Access to a cluster with valid kubeconfig
+- **RBAC Permissions**: Read access to cluster resources
+- **Dependencies**: All managed via `go.mod` (k8s.io/client-go, k8s.io/apimachinery, etc.)
+
+### For Comparison Mode
+- Two valid kubeconfig files
+- Network access to both clusters
+- Appropriate RBAC permissions in both clusters
+
+## Container Usage
+
+### Build Container
+```bash
+docker build -t k8s-resource-collector .
+```
+
+### Run Container
+
+**Directory mode:**
+```bash
+docker run --rm \
+  -v "$KUBECONFIG:/root/.kube/config:ro" \
+  -v "$(pwd)/output:/app/output" \
+  k8s-resource-collector \
+  --verbose --output /app/output
+```
+
+**Single file mode:**
+```bash
+docker run --rm \
+  -v "$KUBECONFIG:/root/.kube/config:ro" \
+  -v "$(pwd)/output:/app/output" \
+  k8s-resource-collector \
+  --single-file --file /app/output/all-resources.yaml
+```
+
+**Comparison mode:**
+```bash
+docker run --rm \
+  -v ~/.kube/config-1:/root/.kube/config-1:ro \
+  -v ~/.kube/config-2:/root/.kube/config-2:ro \
+  -v "$(pwd)/output:/app/output" \
+  k8s-resource-collector \
+  --kubeconfig1 /root/.kube/config-1 \
+  --kubeconfig2 /root/.kube/config-2 \
+  --output /app/output
+```
+
+### Using the Example Script
+```bash
+chmod +x run-container-example.sh
+./run-container-example.sh
+```
 
 ## License
 
@@ -270,14 +363,42 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Troubleshooting
 
-### Network Issues
-If you encounter network issues when building with external dependencies, use the standalone version:
-```bash
-go build -o bin/k8s-resource-collector ./cmd/main_standalone.go
-```
+### Common Issues
 
-### Permission Issues
-Ensure the tool has proper permissions to read the kubeconfig file and write to the output directory.
+**Issue: "failed to get kubeconfig"**
+- Ensure the kubeconfig file exists and is readable
+- Check that `KUBECONFIG` environment variable is set correctly
+- Verify the file has valid YAML syntax
 
-### Command Not Found
-Make sure `oc` or `kubectl` is installed and available in your PATH.
+**Issue: "failed to create discovery client"**
+- Check network connectivity to the Kubernetes cluster
+- Verify the cluster endpoint in kubeconfig is correct
+- Ensure you have valid credentials
+
+**Issue: "permission denied" errors**
+- Verify your RBAC permissions allow listing resources
+- Check if you need to use a service account with appropriate roles
+- Some resources may require admin privileges
+
+**Issue: Comparison mode fails**
+- Ensure both kubeconfig files are valid
+- Check that both clusters are accessible
+- Verify current context is set in both kubeconfig files
+
+**Issue: Empty output files**
+- Check if the cluster has any resources of that type
+- Verify RBAC permissions for the resource types
+- Look for errors in verbose output
+
+### Performance Tips
+
+1. **Use `--verbose`** to see progress and identify slow resources
+2. **Network latency**: Collection time depends on cluster size and network speed
+3. **Large clusters**: Consider collecting specific namespaces if available
+4. **Comparison mode**: Collects from clusters sequentially; time = sum of both collections
+
+### Getting Help
+
+- Check the [detailed comparison guide](CLUSTER_COMPARISON.md)
+- Review [test examples](tests/README.md)
+- Open an issue on GitHub with verbose output
