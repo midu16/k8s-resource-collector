@@ -41,12 +41,12 @@ test-unit:
 	go test -v -race -coverprofile=coverage.out ./...
 
 # Run enhanced functional tests
-test:
+test: build
 	@echo "Running enhanced functional tests..."
 	cd tests && ./simple_test_runner.sh
 
 # Run comprehensive functional tests
-test-comprehensive:
+test-comprehensive: build
 	@echo "Running comprehensive functional tests..."
 	cd tests && ./test_runner.sh
 
@@ -143,12 +143,12 @@ help:
 	@echo "  build              - Build the binary"
 	@echo "  build-all          - Build for multiple platforms"
 	@echo "  plugin             - Build as oc plugin"
-	@echo "  test               - Run enhanced functional tests"
+	@echo "  test               - Run enhanced functional tests (auto-builds)"
 	@echo "  test-unit          - Run unit tests"
 	@echo "  test-go            - Run Go-based functional tests"
-	@echo "  test-comprehensive - Run comprehensive functional tests"
+	@echo "  test-comprehensive - Run comprehensive functional tests (auto-builds)"
 	@echo "  test-all           - Run all tests (unit + functional)"
-	@echo "  test-binary        - Test the binary"
+	@echo "  test-binary        - Test the binary (requires build)"
 	@echo "  fmt                - Format code"
 	@echo "  fmt-check          - Check code formatting"
 	@echo "  vet                - Run go vet"
