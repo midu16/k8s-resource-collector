@@ -11,12 +11,14 @@ done
 
 ## Features
 
-- **Three Collection Modes**:
+- **Four Collection Modes**:
   - Directory mode: Creates individual YAML files for each resource type
   - Single file mode: Creates one file with all resources (like the original script)
+  - Must-gather mode: Process OpenShift must-gather directories offline
   - Import mode: Splits existing all-resources.yaml files into individual ClusterResource files
+- **Intelligent Deprecation Handling**: Automatically detects Kubernetes/OpenShift versions and uses non-deprecated replacement APIs to prevent warnings
 - **Multi-Cluster Comparison**: Compare resources between two Kubernetes clusters and generate diff reports
-- **Flexible Configuration**: Supports `--kubeconfig` flag or `KUBECONFIG` environment variable
+- **Flexible Configuration**: Supports `--kubeconfig` flag, `KUBECONFIG` environment variable, or `--must-gather` for offline processing
 - **Verbose Logging**: Optional detailed output during collection
 - **Clean Mode**: Option to clean output directories before collection
 - **Cross-Platform**: Works on Linux, macOS, and Windows
@@ -37,7 +39,6 @@ k8s-resource-collector/
 │   ├── simple_test_runner.sh         # Simple test runner
 │   ├── test_config.yaml              # Test configuration
 │   └── README.md                     # Testing documentation
-├── CLUSTER_COMPARISON.md             # Multi-cluster comparison guide
 ├── collector_test.go                 # Unit tests
 ├── Dockerfile                        # Container build file
 ├── go.mod                            # Go module dependencies
@@ -174,17 +175,20 @@ The diff report includes:
 
 ## Command Line Options
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--kubeconfig` | Path to kubeconfig file | `$KUBECONFIG` or `~/.kube/config` |
-| `--kubeconfig1` | First kubeconfig for comparison | - |
-| `--kubeconfig2` | Second kubeconfig for comparison | - |
-| `--output` | Output directory | `./output` |
-| `--file` | Output file for single file mode | - |
-| `--verbose` | Enable verbose output | `false` |
-| `--single-file` | Collect to a single YAML file | `false` |
-| `--clean` | Clean output directory before collection | `false` |
-| `--compare` | Enable comparison mode | `false` |
+| Flag | Description | Default | Notes |
+|------|-------------|---------|-------|
+| `--kubeconfig` | Path to kubeconfig file | `$KUBECONFIG` or `~/.kube/config` | Mutually exclusive with `--must-gather*` |
+| `--kubeconfig1` | First kubeconfig for comparison | - | Fallback if `--kubeconfig` not specified |
+| `--kubeconfig2` | Second kubeconfig for comparison | - | For comparison mode |
+| `--must-gather` | Path to must-gather directory | - | Mutually exclusive with kubeconfig flags |
+| `--must-gather1` | First must-gather for comparison | - | Requires `--must-gather2` |
+| `--must-gather2` | Second must-gather for comparison | - | Requires `--must-gather1` |
+| `--output` | Output directory | `./output` | |
+| `--file` | Output file for single file mode | - | |
+| `--verbose` | Enable verbose output | `false` | |
+| `--single-file` | Collect to a single YAML file | `false` | |
+| `--clean` | Clean output directory before collection | `false` | |
+| `--compare` | Enable comparison mode | `false` | |
 
 ## Example Workflows
 
@@ -194,7 +198,16 @@ The diff report includes:
 ./bin/k8s-resource-collector --verbose --output ./my-output
 ```
 
-### Scenario 2: Production Backup
+### Scenario 2: Must-Gather Processing
+```bash
+# Process an OpenShift must-gather directory (offline)
+./bin/k8s-resource-collector \
+  --must-gather ./must-gather.local.5498831487182099551/ \
+  --output ./output/ \
+  --verbose
+```
+
+### Scenario 3: Production Backup
 ```bash
 # Create a single-file backup of production cluster
 ./bin/k8s-resource-collector \
@@ -222,6 +235,15 @@ The diff report includes:
   --kubeconfig2 ~/.kube/eu-west-config
 ```
 
+### Scenario 5: Must-Gather Comparison
+```bash
+# Compare two must-gather snapshots (e.g., before and after change)
+./bin/k8s-resource-collector \
+  --must-gather1 ./must-gather-before/ \
+  --must-gather2 ./must-gather-after/ \
+  --output ./comparison/
+```
+
 ## Verbose Output Example
 
 ```bash
@@ -231,14 +253,21 @@ The diff report includes:
 Output:
 ```
 Starting resource collection to directory: ./output
-Collecting resource: pods
+Detected Kubernetes version: 1.30
+Detected OpenShift cluster (estimated version: 4.17)
+Using discovery.k8s.io/v1/endpointslices instead of deprecated v1/endpoints
+Skipping deprecated v1/componentstatuses (no replacement available)
+Collecting resource: endpointslices (discovery.k8s.io/v1)
+  endpointslices: SUCCESS - Saved to ./output/discovery.k8s.io-v1-endpointslices.yaml
+Collecting resource: pods (v1)
   pods: SUCCESS - Saved to ./output/v1-pods.yaml
-Collecting resource: services
+Collecting resource: services (v1)
   services: SUCCESS - Saved to ./output/v1-services.yaml
 
 === Collection Summary ===
 Successfully collected: 45 resources
-Errors encountered: 2 resources
+Skipped deprecated: 2 resources
+Errors encountered: 0 resources
 Output directory: ./output
 Duration: 2m30s
 ========================
@@ -390,6 +419,24 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Verify RBAC permissions for the resource types
 - Look for errors in verbose output
 
+**Issue: Deprecation warnings from Kubernetes API**
+- The tool automatically detects and uses non-deprecated replacement APIs
+- Use `--verbose` flag to see which APIs are being used as replacements
+- Example: Instead of `v1/endpoints`, the tool collects `discovery.k8s.io/v1/endpointslices`
+
+
+**Issue: Must-gather directory not found**
+- Verify the path exists: `ls -la ./must-gather.local.xxx/`
+- Check for typos in the path
+- Use absolute paths if relative paths don't work
+- Ensure you have read permissions on the directory
+
+**Issue: "mutually exclusive" error with --must-gather and --kubeconfig**
+- You cannot use both `--must-gather` and `--kubeconfig` at the same time
+- Choose one: either process a must-gather directory (offline) OR connect to a live cluster
+- For live cluster: use `--kubeconfig`
+- For offline processing: use `--must-gather`
+
 ### Performance Tips
 
 1. **Use `--verbose`** to see progress and identify slow resources
@@ -399,6 +446,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ### Getting Help
 
-- Check the [detailed comparison guide](CLUSTER_COMPARISON.md)
+
 - Review [test examples](tests/README.md)
 - Open an issue on GitHub with verbose output
