@@ -40,6 +40,7 @@ k8s-resource-collector/
 │   ├── test_config.yaml              # Test configuration
 │   └── README.md                     # Testing documentation
 ├── collector_test.go                 # Unit tests
+├── CONTRIBUTING.md                   # Contribution guidelines
 ├── Dockerfile                        # Container build file
 ├── go.mod                            # Go module dependencies
 ├── go.sum                            # Dependency checksums
@@ -384,11 +385,24 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Contributing
 
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
+
+- How to set up your development environment
+- Code style and standards
+- Testing requirements
+- Submitting pull requests
+- Review process
+
+Quick start:
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes following our [coding standards](CONTRIBUTING.md#coding-standards)
+4. Add tests and ensure they pass (`make test-all`)
+5. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
+
+For detailed guidelines, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Troubleshooting
 
